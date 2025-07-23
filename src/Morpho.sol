@@ -157,6 +157,79 @@ contract Morpho is IMorphoStaticTyping {
         market[id].lastUpdate = uint128(block.timestamp);
         idToMarketParams[id] = marketParams;
 
+        /**
+         * 记录到区块链日志：将事件数据写入区块链的事件日志中
+         *     供外部监听：前端应用、监控服务等可以监听这些事件
+         *     不执行任何函数：事件只是数据记录，不会调用任何代码
+         *     1. 前端应用监听
+         *     // 监听 CreateMarket 事件
+         *     const filter = morphoContract.filters.CreateMarket();
+         *     morphoContract.on(filter, (id, marketParams, event) => {
+         *         console.log('New market created:', id, marketParams);
+         *         // 更新 UI，刷新市场列表等
+         *     });
+         *     2. 后端服务索引
+         *     // 事件索引服务
+         *     const events = await morphoContract.queryFilter('CreateMarket', fromBlock, toBlock);
+         *     events.forEach(event => {
+         *         // 将事件数据存储到数据库
+         *         saveMarketToDatabase(event.args.id, event.args.marketParams);
+         *     });
+         *     3. 链上其他合约
+         *     其他合约可以通过日志查询来获取历史事件，但不能直接"监听"事件。
+         *
+         *     4. 主动查询
+         *     4.1 直接查询事件日志
+         *     // 使用 ethers.js 查询历史事件
+         *     const morphoContract = new ethers.Contract(address, abi, provider);
+         *
+         *     // 查询所有 CreateMarket 事件
+         *     const events = await morphoContract.queryFilter('CreateMarket');
+         *
+         *     // 查询指定区块范围的事件
+         *     const events = await morphoContract.queryFilter('CreateMarket', fromBlock, toBlock);
+         *
+         *     // 查询特定市场ID的事件
+         *     const filter = morphoContract.filters.CreateMarket(marketId);
+         *     const events = await morphoContract.queryFilter(filter);
+         *
+         *     4.2. 使用 Web3.js
+         *     // 获取过去的事件
+         *     const events = await web3.eth.getPastLogs({
+         *         address: morphoAddress,
+         *         topics: [
+         *             web3.utils.keccak256('CreateMarket(bytes32,MarketParams)')
+         *         ],
+         *         fromBlock: 0,
+         *         toBlock: 'latest'
+         *     });
+         *     4.3. 通过区块浏览器
+         *     在 Etherscan 等区块浏览器上：
+         *
+         *     进入合约地址页面
+         *     点击 "Events" 标签
+         *     可以看到所有历史事件，包括 CreateMarket
+         *     4.4 直接查询合约状态
+         *     // 通过合约的状态变量查询
+         *     mapping(Id => Market) public market;
+         *     mapping(Id => MarketParams) public idToMarketParams;
+         *
+         *     // 如果 market[id].lastUpdate > 0，说明市场已创建
+         *     // 通过 idToMarketParams[id] 可以获取市场参数
+         *     4.5. 使用 The Graph 等索引服务
+         *     如果项目部署了 Graph Protocol 子图，可以通过 GraphQL 查询：
+         *     query {
+         *         markets(where: { id: "0x..." }) {
+         *             id
+         *             marketParams {
+         *                 loanToken
+         *                 collateralToken
+         *                 irm
+         *                 oracle
+         *                 lltv
+         *             }
+         *         }
+         */
         emit EventsLib.CreateMarket(id, marketParams);
 
         // Call to initialize the IRM in case it is stateful.
@@ -481,30 +554,46 @@ contract Morpho is IMorphoStaticTyping {
     /// @dev Accrues interest for the given market `marketParams`.
     /// @dev Assumes that the inputs `marketParams` and `id` match.
     function _accrueInterest(MarketParams memory marketParams, Id id) internal {
+        // 计算自上次利息更新以来的时间差（秒）
         uint256 elapsed = block.timestamp - market[id].lastUpdate;
-        if (elapsed == 0) return;
+        if (elapsed == 0) return; // 如果时间差为0，则不计算利息
 
         if (marketParams.irm != address(0)) {
+            // 从IRM利率模型获取当前借款利率（基于市场参数和状态）
             uint256 borrowRate = IIrm(marketParams.irm).borrowRate(marketParams, market[id]);
+            // 计算应计利息：总借款 × 利率 × 时间因子（泰勒展开近似复利）
             uint256 interest = market[id].totalBorrowAssets.wMulDown(borrowRate.wTaylorCompounded(elapsed));
+            // 更新总借款资产和总供应资产
             market[id].totalBorrowAssets += interest.toUint128();
             market[id].totalSupplyAssets += interest.toUint128();
 
+            // 手续费处理逻辑（若手续费率非零）
             uint256 feeShares;
             if (market[id].fee != 0) {
+                // 计算手续费金额（利息 × 手续费率）
                 uint256 feeAmount = interest.wMulDown(market[id].fee);
+
+                /* 
+                * 计算手续费对应的份额：
+                * 公式：feeShares = feeAmount / (totalSupplyAssets - feeAmount) * totalSupplyShares
+                * 注：分母减feeAmount是为了补偿totalSupplyAssets已包含全额利息的会计处理
+                */
                 // The fee amount is subtracted from the total supply in this calculation to compensate for the fact
                 // that total supply is already increased by the full interest (including the fee amount).
                 feeShares =
                     feeAmount.toSharesDown(market[id].totalSupplyAssets - feeAmount, market[id].totalSupplyShares);
+
+                // 分配给手续费接收方并更新总份额
                 position[id][feeRecipient].supplyShares += feeShares;
                 market[id].totalSupplyShares += feeShares.toUint128();
             }
 
+            // 触发利息累积事件（便于链下监控）
             emit EventsLib.AccrueInterest(id, borrowRate, interest, feeShares);
         }
 
         // Safe "unchecked" cast.
+        // 安全更新最后更新时间戳（unchecked节省Gas，实际场景不会溢出）
         market[id].lastUpdate = uint128(block.timestamp);
     }
 

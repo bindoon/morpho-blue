@@ -12,6 +12,7 @@ library UtilsLib {
     /// @dev Returns true if there is exactly one zero among `x` and `y`.
     function exactlyOneZero(uint256 x, uint256 y) internal pure returns (bool z) {
         assembly {
+            // 当 a 和 b 不同时返回 1，相同时返回 0
             z := xor(iszero(x), iszero(y))
         }
     }
