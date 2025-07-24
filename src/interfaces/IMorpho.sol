@@ -24,20 +24,20 @@ struct Position {
 /// @dev Warning: `totalSupplyShares` does not contain the additional shares accrued by `feeRecipient` since the last
 /// interest accrual.
 struct Market {
-    uint128 totalSupplyAssets;
-    uint128 totalSupplyShares;
-    uint128 totalBorrowAssets;
-    uint128 totalBorrowShares;
-    uint128 lastUpdate;
-    uint128 fee;
+    uint128 totalSupplyAssets; // 总供应资产
+    uint128 totalSupplyShares; // 总供应份额
+    uint128 totalBorrowAssets; // 总借款资产
+    uint128 totalBorrowShares; // 总借款份额
+    uint128 lastUpdate; // 最后更新时间
+    uint128 fee; // 手续费
 }
 
 struct Authorization {
-    address authorizer;
-    address authorized;
-    bool isAuthorized;
-    uint256 nonce;
-    uint256 deadline;
+    address authorizer; // 授权者
+    address authorized; // 被授权者
+    bool isAuthorized; // 是否授权
+    uint256 nonce; // 非重复签名
+    uint256 deadline; // 过期时间
 }
 
 struct Signature {

@@ -10,6 +10,7 @@ import {MathLib} from "./MathLib.sol";
 /// @dev This implementation mitigates share price manipulations, using OpenZeppelin's method of virtual shares:
 /// https://docs.openzeppelin.com/contracts/4.x/erc4626#inflation-attack.
 library SharesMathLib {
+    // 将 MathLib 库中的函数附加到 uint256 类型上，使得 uint256 类型的变量可以直接调用这些库函数。
     using MathLib for uint256;
 
     /// @dev The number of virtual shares has been chosen low enough to prevent overflows, and high enough to ensure
