@@ -8,15 +8,15 @@ struct MarketParams {
     address collateralToken;
     address oracle;
     address irm;
-    uint256 lltv;
+    uint256 lltv; // 抵押率 （如 0.5*1e18 的精度）
 }
 
 /// @dev Warning: For `feeRecipient`, `supplyShares` does not contain the accrued shares since the last interest
 /// accrual.
 struct Position {
-    uint256 supplyShares;
-    uint128 borrowShares;
-    uint128 collateral;
+    uint256 supplyShares; // 供应份额
+    uint128 borrowShares; // 借款份额
+    uint128 collateral; // 抵押品数量（如 1 ETH，单位是 wei，即 1e18）
 }
 
 /// @dev Warning: `totalSupplyAssets` does not contain the accrued interest since the last interest accrual.
@@ -28,7 +28,7 @@ struct Market {
     uint128 totalSupplyShares; // 总供应份额
     uint128 totalBorrowAssets; // 总借款资产
     uint128 totalBorrowShares; // 总借款份额
-    uint128 lastUpdate; // 最后更新时间
+    uint128 lastUpdate; // 最后更新时间，上一次全市场利息结算的时间。每次有用户操作（存款、取款、借贷、还款等），都会先对整个市场统一结算一次利息
     uint128 fee; // 手续费
 }
 

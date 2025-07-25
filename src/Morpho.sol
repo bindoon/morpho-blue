@@ -290,8 +290,8 @@ contract Morpho is IMorphoStaticTyping {
          *             );
          *         }
          *
-         *         function onMorphoSupply(uint256 assets, bytes calldata data) 
-         *             external override 
+         *         function onMorphoSupply(uint256 assets, bytes calldata data)
+         *             external override
          *         {
          *             // 解码策略信息
          *             (
@@ -386,7 +386,7 @@ contract Morpho is IMorphoStaticTyping {
         market[id].totalBorrowShares += shares.toUint128();
         market[id].totalBorrowAssets += assets.toUint128();
 
-        // 检查健康度
+        // 检查健康度，如果失败前面的更新会回滚。这样可以直接用最新的仓位状态来判断健康度，无需手动模拟“假如借了之后会不会健康”。
         require(_isHealthy(marketParams, id, onBehalf), ErrorsLib.INSUFFICIENT_COLLATERAL);
         require(market[id].totalBorrowAssets <= market[id].totalSupplyAssets, ErrorsLib.INSUFFICIENT_LIQUIDITY);
 
@@ -495,8 +495,8 @@ contract Morpho is IMorphoStaticTyping {
     function liquidate(
         MarketParams memory marketParams,
         address borrower,
-        uint256 seizedAssets,
-        uint256 repaidShares,
+        uint256 seizedAssets, // 清算的抵押品数量
+        uint256 repaidShares, // 应偿还份额
         bytes calldata data
     ) external returns (uint256, uint256) {
         Id id = marketParams.id();
@@ -512,8 +512,10 @@ contract Morpho is IMorphoStaticTyping {
             // 检查健康度
             require(!_isHealthy(marketParams, id, borrower, collateralPrice), ErrorsLib.HEALTHY_POSITION);
 
-            // 计算清算激励因子
+            // 计算清算激励因子 LIF 一般 market 创建之初 LIF 也就固定死了
             // The liquidation incentive factor is min(maxLiquidationIncentiveFactor, 1/(1 - cursor*(1 - lltv))).
+            // 清算激励因子 = WAD / (WAD - LIQUIDATION_CURSOR * (WAD - marketParams.lltv))
+            // 清算激励因子 = 1 / (1 - LIQUIDATION_CURSOR * (1 - marketParams.lltv))
             uint256 liquidationIncentiveFactor = UtilsLib.min(
                 MAX_LIQUIDATION_INCENTIVE_FACTOR,
                 WAD.wDivDown(WAD - LIQUIDATION_CURSOR.wMulDown(WAD - marketParams.lltv))
@@ -521,8 +523,10 @@ contract Morpho is IMorphoStaticTyping {
 
             // 如果清算资产大于0，则计算应偿还份额
             if (seizedAssets > 0) {
+                // 清算资产价值 = 清算的抵押品数量 * 抵押品价格 / 1e36
                 uint256 seizedAssetsQuoted = seizedAssets.mulDivUp(collateralPrice, ORACLE_PRICE_SCALE);
 
+                // 应偿还份额 = (清算资产价值 / 清算激励因子) * 总借款份额 / 总借款资产
                 repaidShares = seizedAssetsQuoted.wDivUp(liquidationIncentiveFactor).toSharesUp(
                     market[id].totalBorrowAssets, market[id].totalBorrowShares
                 );
@@ -532,7 +536,7 @@ contract Morpho is IMorphoStaticTyping {
             }
         }
 
-        // 计算应偿还资产
+        // 计算应偿还资产 = 应偿还份额 * 总借款资产 / 总借款份额
         uint256 repaidAssets = repaidShares.toAssetsUp(market[id].totalBorrowAssets, market[id].totalBorrowShares);
 
         // 更新仓位
@@ -656,7 +660,7 @@ contract Morpho is IMorphoStaticTyping {
             uint256 borrowRate = IIrm(marketParams.irm).borrowRate(marketParams, market[id]);
             // 计算应计利息：总借款 × 利率 × 时间因子（泰勒展开近似复利）
             uint256 interest = market[id].totalBorrowAssets.wMulDown(borrowRate.wTaylorCompounded(elapsed));
-            // 更新总借款资产和总供应资产
+            // 更新总借款资产和总供应资产， 借还利息都增加，总体还是0和
             market[id].totalBorrowAssets += interest.toUint128();
             market[id].totalSupplyAssets += interest.toUint128();
 
@@ -701,6 +705,8 @@ contract Morpho is IMorphoStaticTyping {
     function _isHealthy(MarketParams memory marketParams, Id id, address borrower) internal view returns (bool) {
         if (position[id][borrower].borrowShares == 0) return true;
 
+        //  uint256的精度为 2²⁵⁶ - 1 ≈ 1.1579 × 10⁷⁷
+        // 抵押品价格精度为 1e36 的精度
         uint256 collateralPrice = IOracle(marketParams.oracle).price();
 
         return _isHealthy(marketParams, id, borrower, collateralPrice);
@@ -715,9 +721,15 @@ contract Morpho is IMorphoStaticTyping {
         view
         returns (bool)
     {
+        // 借款资产 = 借款份额 * (总借款资产 + 虚拟资产) / (总借款份额 + 虚拟份额)
+        // 虚拟资产和虚拟份额是为了防止份额操纵，确保计算结果不会因为份额数量过小而出现舍入误差。
+        // 虚拟资产和虚拟份额的值为1，所以计算结果不会因为份额数量过小而出现舍入误差。
         uint256 borrowed = uint256(position[id][borrower].borrowShares).toAssetsUp(
             market[id].totalBorrowAssets, market[id].totalBorrowShares
         );
+        // 最大借款资产 = (抵押品数量 * 抵押品价格 / 1e36 ) * lltv / 1e18
+        // step1: uint256 value = collateral * collateralPrice; 抵押品的总价值，但单位是“wei × 价格精度”，比如 1e18 × 1e8 = 1e26。
+        // step2: 所以需要除以 1e36 将单位转换为“wei”，再乘以 lltv 得到最大借款资产。
         uint256 maxBorrow = uint256(position[id][borrower].collateral).mulDivDown(collateralPrice, ORACLE_PRICE_SCALE)
             .wMulDown(marketParams.lltv);
 

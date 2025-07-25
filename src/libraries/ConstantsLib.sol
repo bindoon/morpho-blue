@@ -4,7 +4,7 @@ pragma solidity ^0.8.0;
 /// @dev The maximum fee a market can have (25%).
 uint256 constant MAX_FEE = 0.25e18;
 
-/// @dev Oracle price scale.
+/// @dev Oracle price scale. 所有对接 Morpho Blue 的预言机，都必须返回 1e36 精度的价格。
 uint256 constant ORACLE_PRICE_SCALE = 1e36;
 
 /// @dev Liquidation cursor.
