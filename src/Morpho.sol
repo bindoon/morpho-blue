@@ -339,6 +339,7 @@ contract Morpho is IMorphoStaticTyping {
 
         // 计算份额 保守计算原则（Conservative Calculation）总是向对协议有利的方向舍入。
         if (assets > 0) shares = assets.toSharesUp(market[id].totalSupplyAssets, market[id].totalSupplyShares);
+        // shares * (totalAssets + VIRTUAL_ASSETS) / (totalShares + VIRTUAL_SHARES)
         else assets = shares.toAssetsDown(market[id].totalSupplyAssets, market[id].totalSupplyShares);
 
         // 更新仓位
@@ -667,7 +668,7 @@ contract Morpho is IMorphoStaticTyping {
             uint256 borrowRate = IIrm(marketParams.irm).borrowRate(marketParams, market[id]);
             // 计算应计利息：总借款 × 利率 × 时间因子（泰勒展开近似复利）
             uint256 interest = market[id].totalBorrowAssets.wMulDown(borrowRate.wTaylorCompounded(elapsed));
-            // 更新总借款资产和总供应资产， 借还利息都增加，总体还是0和
+            // 更新总借款资产和总供应资产， 同时增加借款人的债务和存款人的收益，总体还是0和
             market[id].totalBorrowAssets += interest.toUint128();
             market[id].totalSupplyAssets += interest.toUint128();
 
