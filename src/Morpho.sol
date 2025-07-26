@@ -522,11 +522,15 @@ contract Morpho is IMorphoStaticTyping {
             );
 
             // 如果清算资产大于0，则计算应偿还份额
+            /**
+             * 清算灵界点：当抵押品价值 × LIF = 借款金额
+             */
             if (seizedAssets > 0) {
                 // 清算资产价值 = 清算的抵押品数量 * 抵押品价格 / 1e36
                 uint256 seizedAssetsQuoted = seizedAssets.mulDivUp(collateralPrice, ORACLE_PRICE_SCALE);
 
                 // 应偿还份额 = (清算资产价值 / 清算激励因子) * 总借款份额 / 总借款资产
+                // 就是通过把 1/1.15 把份额重新划分，给自己的奖励拿出来。
                 repaidShares = seizedAssetsQuoted.wDivUp(liquidationIncentiveFactor).toSharesUp(
                     market[id].totalBorrowAssets, market[id].totalBorrowShares
                 );
@@ -542,16 +546,19 @@ contract Morpho is IMorphoStaticTyping {
         // 更新仓位
         position[id][borrower].borrowShares -= repaidShares.toUint128();
         market[id].totalBorrowShares -= repaidShares.toUint128();
+        // max(0, totalBorrowAssets - repaidAssets)
         market[id].totalBorrowAssets = UtilsLib.zeroFloorSub(market[id].totalBorrowAssets, repaidAssets).toUint128();
 
         // 更新仓位
+        // Solidity 0.8+ 自动溢出保护确保不会出现负值. 所以不会出现超额清算逻辑。
         position[id][borrower].collateral -= seizedAssets.toUint128();
 
-        // 计算坏账份额和资产
+        // 计算坏账份额和资产，市场承担坏账
         uint256 badDebtShares;
         uint256 badDebtAssets;
         if (position[id][borrower].collateral == 0) {
             badDebtShares = position[id][borrower].borrowShares;
+            // 坏账资产 = min(总借款资产, 坏账份额 * 总借款资产 / 总借款份额)
             badDebtAssets = UtilsLib.min(
                 market[id].totalBorrowAssets,
                 badDebtShares.toAssetsUp(market[id].totalBorrowAssets, market[id].totalBorrowShares)
